@@ -1,0 +1,63 @@
+{
+  "ssh": {
+    "username": "hzq",
+    "host": "211.86.155.236",
+    "ssh_port": "7001",
+    "password": "你猜呀？"
+  },
+  "ollama": {
+    "local_port": "11435",
+    "remote_port": "11434",
+    "model": "deepseek-r1",
+    "model_size": "",
+    "ollama_path": "",
+    "ollama_custom_dir": "",
+    "gpu": "0"
+  },
+  "api_mode": "online",
+  "online_api": {
+    "api_key": "",
+    "api_url": "https://api.siliconflow.cn/v1/chat/completions",
+    "model": "moonshotai/Kimi-K2-Instruct-0905",
+    "provider": "siliconflow",
+    "temperature": "0.7",
+    "max_tokens": "4096",
+    "top_p": "0.7",
+    "enable_thinking": "False",
+    "thinking_budget": "4096"
+  },
+  "table": {
+    "table_file": "NeurIPS 2025 Events.csv",
+    "output_file": "调研报告.csv",
+    "output_columns": "title,category,method,team",
+    "max_workers": "8",
+    "api_delay": "0.5"
+  },
+  "batch_processing": {
+    "enabled": false,
+    "model": "deepseek-ai/DeepSeek-V3",
+    "output_dir": "",
+    "task_id": "",
+    "temperature": "0.7",
+    "max_tokens": "4096",
+    "top_p": "0.7",
+    "enable_thinking": "False",
+    "thinking_budget": "4096"
+  },
+  "prompt": "请分析以下论文是否与\"神经算子预训练\"（neural operator pretraining）或者physics fundation model（物理基础模型）相关。\n\n标题: {name}\n作者: {speakers/authors}\n摘要: {abstract}\n\n如果相关，请提供以下信息（JSON格式）：\n{{\n    \"title\": \"论文标题\",\n    \"category\": \"论文的分类（例如：神经算子预训练、算子学习、预训练方法等）\",\n    \"method\": \"论文提出的具体方法和技术\",\n    \"team\": \"研究团队（作者所属机构或团队名称）\"\n}}\n\n如果不相关，请返回\n{{\n    \"title\": \"不相关\",\n    \"category\": \"\",\n    \"method\": \"\",\n    \"team\": \"\"\n}}\n\n请只返回JSON格式的响应，不要添加其他解释。",
+  "crawler": {
+    "source": "arxiv",
+    "selected_categories": [
+      "cs.AI"
+    ],
+    "start_date": "2025-12-31",
+    "end_date": "2026-01-01",
+    "output_file": "arxiv_papers.csv"
+  },
+  "monitor": {
+    "enabled": true,
+    "rpm_limit": "1000",
+    "tpm_limit": "100000",
+    "total_tokens_limit": "1000000"
+  }
+}

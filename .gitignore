@@ -1,0 +1,6 @@
+/dist/
+/build/
+/*.exe
+__pycache__/
+*.spec
+assets/*.tgz

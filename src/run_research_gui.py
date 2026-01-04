@@ -13,6 +13,9 @@ import csv
 import signal
 import requests
 import threading
+import shutil
+import tempfile
+import subprocess
 from pathlib import Path
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -46,9 +49,9 @@ DEFAULT_MODELS = [
 ]
 
 # 版本信息
-CURRENT_VERSION = "1.0.0"  # 当前版本号
-GITHUB_REPO_OWNER = "your_username"  # GitHub用户名或组织名
-GITHUB_REPO_NAME = "your_repo_name"  # GitHub仓库名
+CURRENT_VERSION = "0.1.0"  # 当前版本号
+GITHUB_REPO_OWNER = "WindyJnsa"
+GITHUB_REPO_NAME = "Papers_Research"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases/latest"
 
 # 获取程序运行目录（支持打包后的exe）
@@ -119,9 +122,11 @@ def get_full_model_name(base_name, size=""):
 class ResearchGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("论文调研工具")
+        self.root.title(f"论文调研工具 v{CURRENT_VERSION}")
         self.root.geometry("1400x800")
         self.root.minsize(1200, 700)
+        # 窗口默认最大化
+        self.root.state('zoomed')  # Windows上最大化窗口
         
         # 配置中文字体（使用微软雅黑，Windows上最美观的中文字体）
         self.chinese_font = "Microsoft YaHei"  # 微软雅黑
@@ -155,6 +160,7 @@ class ResearchGUI:
         self._saved_category_selection = None  # 临时保存的分类选择（用于配置加载）
         self.is_locked = False  # 软件锁定状态
         self.ip_warning_count = 0  # 全局警告计数（不区分IP）
+        self.pending_update_file = None  # 待更新的文件路径（用于自动替换）
         
         # IP白名单
         self.allowed_ips = ["222.195.78.54", "211.86.155.236", "211.86.152.184","10.8.0.2"]
@@ -737,10 +743,28 @@ class ResearchGUI:
         columns_scrollbar = ttk.Scrollbar(columns_frame, orient="vertical", command=columns_canvas.yview)
         self.columns_container = ttk.Frame(columns_canvas)
         
-        self.columns_container.bind(
-            "<Configure>",
-            lambda e: columns_canvas.configure(scrollregion=columns_canvas.bbox("all"))
-        )
+        # 保存canvas引用以便后续使用
+        self.columns_canvas = columns_canvas
+        
+        def update_scroll_region(event=None):
+            """更新滚动区域"""
+            columns_canvas.configure(scrollregion=columns_canvas.bbox("all"))
+        
+        def on_mousewheel(event):
+            """鼠标滚轮滚动"""
+            columns_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        self.columns_container.bind("<Configure>", update_scroll_region)
+        
+        # 绑定鼠标滚轮事件（Windows）
+        columns_canvas.bind("<MouseWheel>", on_mousewheel)
+        # 绑定鼠标滚轮事件（Linux）
+        columns_canvas.bind("<Button-4>", lambda e: columns_canvas.yview_scroll(-1, "units"))
+        columns_canvas.bind("<Button-5>", lambda e: columns_canvas.yview_scroll(1, "units"))
+        # 让容器也支持滚轮
+        self.columns_container.bind("<MouseWheel>", on_mousewheel)
+        self.columns_container.bind("<Button-4>", lambda e: columns_canvas.yview_scroll(-1, "units"))
+        self.columns_container.bind("<Button-5>", lambda e: columns_canvas.yview_scroll(1, "units"))
         
         columns_canvas.create_window((0, 0), window=self.columns_container, anchor="nw")
         columns_canvas.configure(yscrollcommand=columns_scrollbar.set)
@@ -2115,57 +2139,83 @@ class ResearchGUI:
         )
         left_title.pack(pady=(0, 15))
         
-        # 使用指南内容 - 分为两列
+        # 使用指南内容 - 分为两列（可滚动）
         left_guide_frame = ttk.Frame(left_frame)
         left_guide_frame.pack(fill=tk.BOTH, expand=True, pady=10)
         left_guide_frame.columnconfigure(0, weight=1)
         left_guide_frame.columnconfigure(1, weight=1)
+        left_guide_frame.rowconfigure(0, weight=1)
         
         # 左列内容
         left_guide_text = """一、论文调研模块使用步骤
 
+【模式选择】
+程序支持两种运行模式：
+• 在线API模式：使用硅基流动等在线API服务（无需SSH）
+• Ollama模式：使用本地或远程Ollama服务（需要SSH）
+
+【在线API模式】
+1. 选择API提供商（硅基流动/自定义）
+2. 配置API密钥和URL
+3. 选择模型（支持自动刷新模型列表）
+4. 配置API参数（温度、最大Token等）
+
+【Ollama模式】
 1. 配置SSH连接
-   • 填写服务器用户名、IP地址、SSH端口和密码
-   • 点击"连接"按钮建立SSH隧道
-
+   • 填写服务器用户名、IP、SSH端口和密码
+   • 点击"连接"建立SSH隧道
 2. 配置Ollama服务
-   • 系统会自动检测Ollama路径，如果检测到Ollama，则直接使用，否则会自动安装Ollama并配置
-   • 默认用当前目录下ollama-linux-amd64.tgz文件上传安装，可在https://ollama.com/download/ollama-linux-amd64.tgz 找到
+   • 系统自动检测或安装Ollama
    • 设置本地端口（默认11435）和远程端口（默认11434）
-   • 选择要使用的模型名称和大小
-   • 点击"刷新"按钮可以从Ollama官网获取最新模型列表
+   • 选择模型并点击"刷新"获取最新模型列表
 
-3. 配置表格文件
-   • 选择要分析的CSV或Excel表格文件
-   • 设置输出文件名（支持CSV和Excel格式）
-   • 点击"刷新列名"自动分析表格列名
-   • 设置输出列名（用逗号分隔）
+【表格配置】
+1. 选择要分析的CSV或Excel文件
+2. 点击"刷新列名"自动分析表格列名
+3. 设置输出文件名和输出列名（逗号分隔）
 
-4. 配置分析Prompt
-   • 在Prompt输入框中编写分析提示词
-   • 可以使用 {列名} 来引用表格中的列
-   • 点击下方的列名标签可以快速插入到Prompt中
-   • 点击"添加到Prompt"可以将输出列名格式化为JSON结构
+【Prompt配置】
+1. 在Prompt输入框编写分析提示词
+2. 使用 {列名} 引用表格中的列（自动替换）
+3. 点击列名标签快速插入到Prompt
+4. 点击"添加到Prompt"格式化输出列名为JSON结构
 
-5. 配置并发参数
-   • 设置并发线程数（建议8-16）
-   • 设置API延迟时间（秒），避免请求过快
+【并发配置】
+• 设置并发线程数（建议8-16）
+• 设置API延迟时间（秒），避免请求过快
+• 启用批处理时，并发设置会被禁用
 
-6. 开始运行
-   • 点击"开始"按钮开始分析
-   • 在日志区域查看实时进度
-   • 可以随时点击"停止"按钮中断运行"""
+【批处理模式】
+1. 勾选"启用批处理"
+2. 选择批处理专用模型（仅支持特定模型）
+3. 配置批处理API参数
+4. 设置输出目录
+5. 使用"检查状态"、"取消任务"、"下载结果"管理任务
+
+【用量监控】
+1. 勾选"启用监控"查看实时用量
+2. 监控指标：RPM、TPM、总Token数、平均Token/提示
+3. 可自定义各项指标的上限（超限会变红提示）
+
+【开始运行】
+• 点击"开始"按钮开始分析
+• 在运行日志区域查看实时进度
+• 可随时点击"停止"按钮中断运行"""
         
-        left_guide_label = tk.Label(
+        left_guide_text_widget = scrolledtext.ScrolledText(
             left_guide_frame,
-            text=left_guide_text.strip(),
+            wrap=tk.WORD,
             font=(self.chinese_font, 10),
             fg="#34495e",
-            justify=tk.LEFT,
-            anchor="nw",
-            wraplength=450  # 增加宽度，让子列更宽
+            bg="#fafafa",
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=5,
+            pady=5
         )
-        left_guide_label.grid(row=0, column=0, sticky=(tk.W, tk.N), padx=(0, 15))
+        left_guide_text_widget.insert(1.0, left_guide_text.strip())
+        left_guide_text_widget.config(state=tk.DISABLED)  # 设置为只读
+        left_guide_text_widget.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 15))
         
         # 右列内容
         right_guide_text = """二、论文爬虫模块使用步骤
@@ -2176,39 +2226,62 @@ class ResearchGUI:
 2. 选择学科分类
    • 从分类树中选择一个或多个学科分类
    • 支持176个ArXiv学科分类
-   • 点击分类项即可切换选择状态
+   • 点击分类项切换选择状态
+   • 使用左右箭头按钮批量移动分类
 
 3. 设置时间范围
    • 点击日期输入框旁的日历图标选择日期
-   • 程序会自动爬取该时间段内的所有论文
+   • 程序自动爬取该时间段内的所有论文
 
 4. 设置输出文件
    • 选择输出文件路径
    • 支持CSV和Excel格式
+   • 文件名会自动包含分类和时间信息
 
 5. 开始爬取
    • 点击"开始"按钮开始爬取
-   • 程序会自动遵守ArXiv API限制
+   • 程序自动遵守ArXiv API限制
    • 在日志区域查看爬取进度
 
-三、注意事项
+三、模型管理模块
+
+1. 查看模型列表
+   • 自动显示已安装的Ollama模型
+   • 显示模型大小和最后更新时间
+
+2. 下载模型
+   • 输入模型名称（如：deepseek-r1）
+   • 点击"下载"按钮下载模型
+   • 显示下载进度
+
+3. 删除模型
+   • 选择要删除的模型
+   • 点击"删除"按钮删除模型
+
+四、注意事项
 
 • 所有配置会自动保存，下次启动时自动恢复
 • SSH连接需要确保网络畅通
 • 表格文件的第一行必须是列名
 • Prompt中的 {列名} 会被自动替换为表格中的实际值
-• 输出列名需要与LLM返回的JSON字段对应"""
+• 输出列名需要与LLM返回的JSON字段对应
+• 批处理模式仅支持特定模型，详见批处理配置
+• 用量监控基于实际请求时间计算，运行时间不足1分钟时按真实时间计算"""
         
-        right_guide_label = tk.Label(
+        right_guide_text_widget = scrolledtext.ScrolledText(
             left_guide_frame,
-            text=right_guide_text.strip(),
+            wrap=tk.WORD,
             font=(self.chinese_font, 10),
             fg="#34495e",
-            justify=tk.LEFT,
-            anchor="nw",
-            wraplength=450  # 增加宽度，让子列更宽
+            bg="#fafafa",
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=5,
+            pady=5
         )
-        right_guide_label.grid(row=0, column=1, sticky=(tk.W, tk.N), padx=(15, 0))
+        right_guide_text_widget.insert(1.0, right_guide_text.strip())
+        right_guide_text_widget.config(state=tk.DISABLED)  # 设置为只读
+        right_guide_text_widget.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(15, 0))
         
         # === 右侧：软件介绍和联系方式 ===
         right_frame = ttk.Frame(main_frame, padding="10")
@@ -2280,15 +2353,15 @@ class ResearchGUI:
         check_update_btn = tk.Button(
             update_check_frame,
             text="检查更新",
-            font=(self.chinese_font, 16, "bold"),
+            font=(self.chinese_font, 14, "bold"),
             bg="#3498db",
             fg="white",
             activebackground="#2980b9",
             activeforeground="white",
             relief=tk.RAISED,
-            bd=3,
-            padx=40,
-            pady=15,
+            bd=2,
+            padx=30,
+            pady=10,
             cursor="hand2",
             command=self.check_for_updates
         )
@@ -2303,10 +2376,11 @@ class ResearchGUI:
         )
         update_title.pack(pady=(30, 15))
         
-        update_text = """• 2026-01-02: 初始版本发布
-• 支持一键大模型部署+prompt功能
-• 支持ArXiv论文爬虫
-• 支持Ollama模型一键管理
+        update_text = """• 2026-01-02: 初始版本V0.1.0发布
+• 加入硅基流动在线API支持
+• 加入更新功能
+• 加入批处理任务功能
+• 加入模型用量监控
 """
         
         update_label = tk.Label(
@@ -2329,7 +2403,8 @@ class ResearchGUI:
         todo_title.pack(pady=(30, 15))
         
         todo_text = """• 支持更多数据源（如openreview等）
-• 支持在线模型API key
+• 支持更多在线模型API
+• 支持embedding模型
 """
         
         todo_label = tk.Label(
@@ -2375,6 +2450,11 @@ class ResearchGUI:
             if col >= max_cols:
                 col = 0
                 row += 1
+        
+        # 更新滚动区域，确保可以滚动
+        if hasattr(self, 'columns_canvas'):
+            self.columns_canvas.update_idletasks()
+            self.columns_canvas.configure(scrollregion=self.columns_canvas.bbox("all"))
     
     def browse_table(self):
         """浏览选择表格文件"""
@@ -6618,6 +6698,44 @@ class ResearchGUI:
         except Exception as e:
             self.log(f"释放端口时出错: {e}", "WARN")
         
+        # 检查是否有待更新的文件，如果有则创建批处理脚本自动替换
+        if self.pending_update_file and os.path.exists(self.pending_update_file):
+            try:
+                if hasattr(sys, '_MEIPASS'):
+                    # 打包后的exe环境
+                    current_exe = sys.executable
+                    exe_dir = os.path.dirname(current_exe)
+                    exe_name = os.path.basename(current_exe)
+                    
+                    # 创建批处理脚本来替换exe
+                    temp_dir = tempfile.gettempdir()
+                    batch_file = os.path.join(temp_dir, f"PaperResearchTool_update_{int(time.time())}.bat")
+                    
+                    with open(batch_file, 'w', encoding='utf-8') as f:
+                        f.write('@echo off\n')
+                        f.write('chcp 65001 >nul\n')  # 设置UTF-8编码
+                        f.write('timeout /t 2 /nobreak >nul\n')  # 等待2秒确保程序完全关闭
+                        f.write(f'if exist "{current_exe}" (\n')
+                        f.write(f'    del /f /q "{current_exe}"\n')
+                        f.write(')\n')
+                        f.write(f'if exist "{self.pending_update_file}" (\n')
+                        f.write(f'    move /y "{self.pending_update_file}" "{current_exe}"\n')
+                        f.write(f'    echo 更新完成！\n')
+                        f.write(')\n')
+                        f.write(f'del /f /q "%~f0"\n')  # 删除批处理脚本自身
+                    
+                    # 以隐藏窗口方式运行批处理脚本
+                    subprocess.Popen(['cmd.exe', '/c', batch_file], 
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+                else:
+                    # 开发环境，提示手动替换
+                    messagebox.showinfo("更新提示", 
+                        f"更新文件已下载到：\n{self.pending_update_file}\n\n"
+                        f"请手动替换程序文件。", 
+                        parent=self.root)
+            except Exception as e:
+                self.log(f"创建自动更新脚本时出错: {e}", "WARN")
+        
         self.root.destroy()
     
     def check_for_updates(self):
@@ -6701,16 +6819,24 @@ class ResearchGUI:
                 messagebox.showwarning("下载更新", "未找到可下载的更新文件（.exe或.zip）", parent=self.root)
                 return
             
-            # 询问保存位置
-            save_path = filedialog.asksaveasfilename(
-                title="保存更新文件",
-                initialfile=filename,
-                defaultextension=".exe" if filename.endswith(".exe") else ".zip",
-                filetypes=[("可执行文件", "*.exe"), ("压缩文件", "*.zip"), ("所有文件", "*.*")]
-            )
-            
-            if not save_path:
-                return  # 用户取消
+            # 检查是否是exe文件，如果是则自动替换
+            is_exe = filename.endswith(".exe")
+            if is_exe:
+                # 自动替换模式：下载到临时目录
+                temp_dir = tempfile.gettempdir()
+                save_path = os.path.join(temp_dir, f"PaperResearchTool_update_{int(time.time())}.exe")
+                auto_replace = True
+            else:
+                # zip文件：询问保存位置
+                save_path = filedialog.asksaveasfilename(
+                    title="保存更新文件",
+                    initialfile=filename,
+                    defaultextension=".zip",
+                    filetypes=[("压缩文件", "*.zip"), ("所有文件", "*.*")]
+                )
+                if not save_path:
+                    return  # 用户取消
+                auto_replace = False
             
             # 显示下载进度窗口
             progress_window = tk.Toplevel(self.root)
@@ -6749,7 +6875,27 @@ class ResearchGUI:
                                     progress_window.update()
                     
                     progress_window.after(0, lambda: progress_window.destroy())
-                    messagebox.showinfo("下载完成", f"更新文件已下载到：\n{save_path}\n\n请手动安装更新。", parent=self.root)
+                    
+                    if auto_replace:
+                        # 自动替换模式：保存待更新文件路径，程序关闭时自动替换
+                        self.pending_update_file = save_path
+                        current_exe = sys.executable if hasattr(sys, '_MEIPASS') else __file__
+                        if not hasattr(sys, '_MEIPASS'):
+                            # 开发环境，提示手动替换
+                            messagebox.showinfo("下载完成", 
+                                f"更新文件已下载到：\n{save_path}\n\n"
+                                f"程序将在关闭时自动替换。请关闭程序以完成更新。", 
+                                parent=self.root)
+                        else:
+                            # 打包后的exe，可以自动替换
+                            messagebox.showinfo("下载完成", 
+                                f"更新文件已下载完成！\n\n"
+                                f"程序将在关闭时自动替换为最新版本。\n"
+                                f"请关闭程序以完成更新。", 
+                                parent=self.root)
+                    else:
+                        # 手动安装模式
+                        messagebox.showinfo("下载完成", f"更新文件已下载到：\n{save_path}\n\n请手动安装更新。", parent=self.root)
                     
                 except Exception as e:
                     progress_window.after(0, lambda: progress_window.destroy())
